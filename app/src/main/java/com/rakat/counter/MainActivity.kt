@@ -1,5 +1,6 @@
 package com.rakat.counter
 
+import android.animation.ValueAnimator
 import android.app.Activity
 import android.content.Context
 import android.graphics.*
@@ -12,8 +13,11 @@ import android.os.Bundle
 import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
+import android.view.animation.AccelerateDecelerateInterpolator
 import android.widget.LinearLayout
 import android.widget.TextView
+import kotlin.math.ceil
+import kotlin.math.max
 
 class MainActivity : Activity(), SensorEventListener {
 
@@ -23,6 +27,7 @@ class MainActivity : Activity(), SensorEventListener {
     private var prayer = 3
     // 0 = تکبیر | هر بار نزدیک شدن به سنسور = یک سجده (هر رکعت ۲ سجده)
     private var step = 0
+
     private var sensorManager: SensorManager? = null
     private var proximity: Sensor? = null
     private var isNear = false
@@ -31,20 +36,49 @@ class MainActivity : Activity(), SensorEventListener {
     private lateinit var counter: CounterView
     private val buttons = mutableListOf<TextView>()
     private var dp = 1f
+    private var ready = false
+    private var tf: Typeface = Typeface.DEFAULT
 
     private fun total() = 2 * prayers[prayer].second
+
+    /** وضعیت نمایش: تعداد فلش‌های بالا = شماره رکعت، تعداد فلش‌های پایین = شماره سجده */
+    class Scene(
+        val takbir: Boolean,
+        val up: Int,
+        val down: Int,
+        val rak: String,
+        val saj: String,
+        val done: Boolean
+    )
+
+    private fun scene(): Scene {
+        if (step == 0) return Scene(true, 0, 0, "", "", false)
+        val k = step - 1
+        return Scene(
+            false, k / 2 + 1, k % 2 + 1,
+            "رکعت " + ord[k / 2],
+            "سجده " + if (k % 2 == 0) "اول" else "دوم",
+            step >= total()
+        )
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         dp = resources.displayMetrics.density
+        tf = try {
+            Typeface.createFromAsset(assets, "primary.ttf")
+        } catch (e: Exception) {
+            Typeface.DEFAULT
+        }
+
         val prefs = getSharedPreferences("state", MODE_PRIVATE)
         prayer = prefs.getInt("prayer", 3).coerceIn(0, prayers.size - 1)
         step = prefs.getInt("step", 0).coerceIn(0, total())
 
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        window.statusBarColor = Color.parseColor("#1565C0")
         sensorManager = getSystemService(Context.SENSOR_SERVICE) as SensorManager
         proximity = sensorManager?.getDefaultSensor(Sensor.TYPE_PROXIMITY)
-        window.statusBarColor = Color.parseColor("#1565C0")
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -62,6 +96,7 @@ class MainActivity : Activity(), SensorEventListener {
         prayers.forEachIndexed { i, p ->
             val t = TextView(this).apply {
                 text = p.first
+                typeface = tf
                 textSize = 20f
                 gravity = Gravity.CENTER
                 setOnClickListener { prayer = i; step = 0; refresh() }
@@ -95,7 +130,7 @@ class MainActivity : Activity(), SensorEventListener {
     override fun onSensorChanged(e: SensorEvent) {
         val near = e.values[0] < (proximity?.maximumRange ?: 5f).coerceAtMost(5f)
         val now = System.currentTimeMillis()
-        if (near && !isNear && now - lastCount > 600) {
+        if (near && !isNear && now - lastCount > 700) {
             lastCount = now
             step = if (step >= total()) 0 else step + 1
             refresh()
@@ -113,14 +148,55 @@ class MainActivity : Activity(), SensorEventListener {
             }
             t.setTextColor(if (sel) Color.WHITE else 0xFF333333.toInt())
         }
-        counter.invalidate()
+        counter.show(scene(), ready)
+        ready = true
         getSharedPreferences("state", MODE_PRIVATE).edit()
             .putInt("prayer", prayer).putInt("step", step).apply()
     }
 
     inner class CounterView(ctx: Context) : View(ctx) {
         private val p = Paint(Paint.ANTI_ALIAS_FLAG)
-        private val text = Paint(Paint.ANTI_ALIAS_FLAG).apply { textAlign = Paint.Align.CENTER }
+        private val text = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            textAlign = Paint.Align.CENTER
+            typeface = tf
+        }
+
+        private var from = scene()
+        private var to = from
+        private var t = 1f
+
+        private val anim = ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = 550
+            interpolator = AccelerateDecelerateInterpolator()
+            addUpdateListener { t = it.animatedValue as Float; invalidate() }
+        }
+
+        fun show(s: Scene, animate: Boolean) {
+            anim.cancel()
+            if (!animate) {
+                from = s; to = s; t = 1f
+            } else {
+                from = to; to = s; t = 0f
+                anim.start()
+            }
+            invalidate()
+        }
+
+        private fun wt(a: Boolean, b: Boolean) = (if (a) 1f - t else 0f) + (if (b) t else 0f)
+
+        private fun drawT(c: Canvas, s: String, x: Float, y: Float, alpha: Float) {
+            val a = (255 * alpha.coerceIn(0f, 1f)).toInt()
+            if (a == 0) return
+            text.color = Color.argb(a, 0, 0, 0)
+            c.drawText(s, x, y, text)
+        }
+
+        private fun drawSwap(c: Canvas, x: Float, y: Float, a: String, b: String, aOn: Boolean, bOn: Boolean) {
+            if (aOn && bOn && a == b) { drawT(c, a, x, y, 1f); return }
+            val dy = 26 * dp
+            if (aOn) drawT(c, a, x, y - dy * t, 1f - t)
+            if (bOn) drawT(c, b, x, y + dy * (1f - t), t)
+        }
 
         override fun onDraw(c: Canvas) {
             val w = width.toFloat()
@@ -159,65 +235,73 @@ class MainActivity : Activity(), SensorEventListener {
 
             // عنوان
             text.textAlign = Paint.Align.RIGHT
-            text.textSize = 20 * dp
-            text.color = 0xFF333333.toInt()
-            text.typeface = Typeface.DEFAULT_BOLD
-            c.drawText("رکعت شمار", w - 24 * dp, 36 * dp, text)
+            text.textSize = 22 * dp
+            drawT(c, "رکعت شمار", w - 24 * dp, 38 * dp, 0.85f)
             text.textAlign = Paint.Align.CENTER
 
-            val n = prayers[prayer].second
-            when {
-                step == 0 -> {
-                    text.color = Color.BLACK
-                    text.typeface = Typeface.create(Typeface.SERIF, Typeface.BOLD)
-                    text.textSize = w * 0.17f
-                    c.drawText("اللّٰه أکبر", cx, h * 0.55f, text)
-                }
-                step >= 2 * n -> {
-                    text.color = Color.BLACK
-                    text.typeface = Typeface.DEFAULT_BOLD
-                    text.textSize = w * 0.09f
-                    c.drawText("نماز تمام شد", cx, h * 0.55f, text)
-                }
-                else -> {
-                    val k = step - 1
-                    val rak = "رکعت " + ord[k / 2]
-                    val saj = "سجده " + if (k % 2 == 0) "اول" else "دوم"
-                    text.typeface = Typeface.DEFAULT
-                    text.textSize = w * 0.075f
-                    text.color = Color.BLACK
-                    c.drawText(rak, cx, h * 0.37f, text)
-                    arrowUp(c, cx, h * 0.47f, h * 0.17f, Color.BLACK)
-                    arrowDown(c, cx, h * 0.64f, h * 0.065f, Color.BLACK)
-                    c.drawText(saj, cx, h * 0.77f, text)
-                }
+            // تکبیر
+            val wTakbir = wt(from.takbir, to.takbir)
+            if (wTakbir > 0f) {
+                text.textSize = w * 0.15f
+                drawT(c, "اللّٰه أکبر", cx, h * 0.55f, wTakbir)
+            }
+
+            // برچسب رکعت و سجده (جابه‌جایی نرم)
+            text.textSize = w * 0.075f
+            drawSwap(c, cx, h * 0.37f, from.rak, to.rak, !from.takbir, !to.takbir)
+            drawSwap(c, cx, h * 0.77f, from.saj, to.saj, !from.takbir, !to.takbir)
+
+            // فلش‌ها: تعداد فلش بالا = رکعت ، تعداد فلش پایین = سجده
+            val up = from.up + (to.up - from.up) * t
+            val down = from.down + (to.down - from.down) * t
+            drawArrows(c, cx, h * 0.47f, up, true, h * 0.17f)
+            drawArrows(c, cx, h * 0.64f, down, false, h * 0.065f)
+
+            // پایان نماز
+            val wDone = wt(from.done, to.done)
+            if (wDone > 0f) {
+                text.textSize = w * 0.055f
+                drawT(c, "نماز تمام شد", cx, h * 0.88f, wDone)
             }
         }
 
-        private fun arrowUp(c: Canvas, cx: Float, cy: Float, len: Float, color: Int) {
-            val tip = cy - len / 2
+        private fun drawArrows(c: Canvas, cx: Float, cy: Float, count: Float, up: Boolean, size: Float) {
+            val spacing = if (up) size * 0.5f else size * 1.6f
+            val eff = max(count, 1f)
+            for (i in 0 until ceil(count).toInt()) {
+                val k = (count - i).coerceIn(0f, 1f)
+                val x = cx + (i - (eff - 1f) / 2f) * spacing
+                p.color = Color.argb((255 * k).toInt(), 0, 0, 0)
+                c.save()
+                c.translate(x, cy)
+                c.scale(k, k)
+                if (up) arrowUp(c, size) else arrowDown(c, size)
+                c.restore()
+            }
+        }
+
+        private fun arrowUp(c: Canvas, len: Float) {
+            val tip = -len / 2
             val hb = tip + len * 0.28f
             val hw = len * 0.17f
             val sw = len * 0.05f
             val path = Path().apply {
-                moveTo(cx, tip)
-                lineTo(cx + hw, hb); lineTo(cx + sw, hb); lineTo(cx + sw, cy + len / 2)
-                lineTo(cx - sw, cy + len / 2); lineTo(cx - sw, hb); lineTo(cx - hw, hb)
+                moveTo(0f, tip)
+                lineTo(hw, hb); lineTo(sw, hb); lineTo(sw, len / 2)
+                lineTo(-sw, len / 2); lineTo(-sw, hb); lineTo(-hw, hb)
                 close()
             }
-            p.color = color
             c.drawPath(path, p)
         }
 
-        private fun arrowDown(c: Canvas, cx: Float, cy: Float, size: Float, color: Int) {
+        private fun arrowDown(c: Canvas, size: Float) {
             val path = Path().apply {
-                moveTo(cx, cy + size / 2)
-                lineTo(cx + size * 0.55f, cy - size / 2)
-                lineTo(cx, cy - size * 0.15f)
-                lineTo(cx - size * 0.55f, cy - size / 2)
+                moveTo(0f, size / 2)
+                lineTo(size * 0.55f, -size / 2)
+                lineTo(0f, -size * 0.15f)
+                lineTo(-size * 0.55f, -size / 2)
                 close()
             }
-            p.color = color
             c.drawPath(path, p)
         }
     }
