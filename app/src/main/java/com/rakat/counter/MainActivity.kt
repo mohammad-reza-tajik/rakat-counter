@@ -9,6 +9,9 @@ import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
+import android.media.AudioFormat
+import android.media.AudioManager
+import android.media.AudioTrack
 import android.os.Bundle
 import android.view.Gravity
 import android.view.View
@@ -16,8 +19,11 @@ import android.view.WindowManager
 import android.view.animation.AccelerateDecelerateInterpolator
 import android.widget.LinearLayout
 import android.widget.TextView
+import kotlin.math.PI
 import kotlin.math.ceil
+import kotlin.math.exp
 import kotlin.math.max
+import kotlin.math.sin
 
 class MainActivity : Activity(), SensorEventListener {
 
@@ -31,6 +37,7 @@ class MainActivity : Activity(), SensorEventListener {
     private var sensorManager: SensorManager? = null
     private var proximity: Sensor? = null
     private var isNear = false
+    private var tick: AudioTrack? = null
     private var lastCount = 0L
 
     private lateinit var counter: CounterView
@@ -66,10 +73,12 @@ class MainActivity : Activity(), SensorEventListener {
         super.onCreate(savedInstanceState)
         dp = resources.displayMetrics.density
         tf = try {
-            Typeface.createFromAsset(assets, "primary.ttf")
+            Typeface.createFromAsset(assets, "fonts/primary.ttf")
         } catch (e: Exception) {
             Typeface.DEFAULT
         }
+
+        tick = buildTick()
 
         val prefs = getSharedPreferences("state", MODE_PRIVATE)
         prayer = prefs.getInt("prayer", 3).coerceIn(0, prayers.size - 1)
@@ -114,6 +123,32 @@ class MainActivity : Activity(), SensorEventListener {
         refresh()
     }
 
+    /** صدای تیک با اسیلاتور (موج سینوسی کوتاه با افت سریع) ساخته می‌شود، بدون فایل صوتی */
+    private fun buildTick(): AudioTrack? = try {
+        val sr = 44100
+        val n = sr * 60 / 1000
+        val pcm = ShortArray(n) { i ->
+            val time = i.toDouble() / sr
+            val env = exp(-time / 0.008) * minOf(1.0, i / 40.0)
+            (sin(2 * PI * 2000 * time) * env * 0.8 * Short.MAX_VALUE).toInt().toShort()
+        }
+        val track = AudioTrack(
+            AudioManager.STREAM_MUSIC, sr, AudioFormat.CHANNEL_OUT_MONO,
+            AudioFormat.ENCODING_PCM_16BIT, pcm.size * 2, AudioTrack.MODE_STATIC
+        )
+        track.write(pcm, 0, pcm.size)
+        track
+    } catch (e: Exception) {
+        null
+    }
+
+    private fun playTick() {
+        try {
+            tick?.let { it.stop(); it.reloadStaticData(); it.play() }
+        } catch (e: Exception) {
+        }
+    }
+
     override fun onResume() {
         super.onResume()
         isNear = false
@@ -125,6 +160,12 @@ class MainActivity : Activity(), SensorEventListener {
         sensorManager?.unregisterListener(this)
     }
 
+    override fun onDestroy() {
+        super.onDestroy()
+        tick?.release()
+        tick = null
+    }
+
     override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
 
     override fun onSensorChanged(e: SensorEvent) {
@@ -134,6 +175,7 @@ class MainActivity : Activity(), SensorEventListener {
             lastCount = now
             step = if (step >= total()) 0 else step + 1
             refresh()
+            playTick()
         }
         isNear = near
     }
@@ -248,7 +290,7 @@ class MainActivity : Activity(), SensorEventListener {
 
             // برچسب رکعت و سجده (جابه‌جایی نرم)
             text.textSize = w * 0.075f
-            drawSwap(c, cx, h * 0.37f, from.rak, to.rak, !from.takbir, !to.takbir)
+            drawSwap(c, cx, h * 0.30f, from.rak, to.rak, !from.takbir, !to.takbir)
             drawSwap(c, cx, h * 0.77f, from.saj, to.saj, !from.takbir, !to.takbir)
 
             // فلش‌ها: تعداد فلش بالا = رکعت ، تعداد فلش پایین = سجده
