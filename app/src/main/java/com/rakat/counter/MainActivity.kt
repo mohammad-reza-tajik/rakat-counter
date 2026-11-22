@@ -2,8 +2,16 @@ package com.rakat.counter
 
 import android.animation.ValueAnimator
 import android.app.Activity
+import android.app.Dialog
 import android.content.Context
-import android.graphics.*
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.Path
+import android.graphics.RadialGradient
+import android.graphics.Shader
+import android.graphics.Typeface
+import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
 import android.hardware.Sensor
 import android.hardware.SensorEvent
@@ -12,17 +20,23 @@ import android.hardware.SensorManager
 import android.media.AudioFormat
 import android.media.AudioManager
 import android.media.AudioTrack
+import android.os.Build
 import android.os.Bundle
 import android.view.Gravity
 import android.view.View
+import android.view.Window
 import android.view.WindowManager
 import android.view.animation.AccelerateDecelerateInterpolator
+import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.PopupWindow
 import android.widget.TextView
+import android.widget.Toast
 import kotlin.math.PI
 import kotlin.math.ceil
 import kotlin.math.exp
 import kotlin.math.max
+import kotlin.math.min
 import kotlin.math.sin
 
 class MainActivity : Activity(), SensorEventListener {
@@ -31,24 +45,32 @@ class MainActivity : Activity(), SensorEventListener {
     private val ord = listOf("اول", "دوم", "سوم", "چهارم")
 
     private var prayer = 3
-    // 0 = تکبیر | هر بار نزدیک شدن به سنسور = یک سجده (هر رکعت ۲ سجده)
+    // 0 = تکبیر | هر شمارش = یک سجده (هر رکعت ۲ سجده)
     private var step = 0
+    private var dark = true
+    private var touchMode = false
 
     private var sensorManager: SensorManager? = null
     private var proximity: Sensor? = null
     private var isNear = false
-    private var tick: AudioTrack? = null
     private var lastCount = 0L
+    private var tick: AudioTrack? = null
 
     private lateinit var counter: CounterView
     private val buttons = mutableListOf<TextView>()
     private var dp = 1f
     private var ready = false
     private var tf: Typeface = Typeface.DEFAULT
+    private var tfB: Typeface = Typeface.DEFAULT_BOLD
 
     private fun total() = 2 * prayers[prayer].second
+    private fun d(v: Int) = (v * dp).toInt()
 
-    /** وضعیت نمایش: تعداد فلش‌های بالا = شماره رکعت، تعداد فلش‌های پایین = شماره سجده */
+    // رنگ‌های تم
+    private val bgColor: Int get() = if (dark) 0xFF000000.toInt() else 0xFFBDBDBD.toInt()
+    private val barFg: Int get() = if (dark) 0xFFFFFFFF.toInt() else 0xFF222222.toInt()
+    private val ink: Int get() = if (dark) 0xFFFFFFFF.toInt() else 0xFF000000.toInt()
+
     class Scene(
         val takbir: Boolean,
         val up: Int,
@@ -77,53 +99,272 @@ class MainActivity : Activity(), SensorEventListener {
         } catch (e: Exception) {
             Typeface.DEFAULT
         }
-
-        tick = buildTick()
+        tfB = Typeface.create(tf, Typeface.BOLD)
 
         val prefs = getSharedPreferences("state", MODE_PRIVATE)
         prayer = prefs.getInt("prayer", 3).coerceIn(0, prayers.size - 1)
         step = prefs.getInt("step", 0).coerceIn(0, total())
+        dark = prefs.getBoolean("dark", true)
+        touchMode = prefs.getBoolean("touch", false)
 
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        window.statusBarColor = Color.parseColor("#1565C0")
         sensorManager = getSystemService(Context.SENSOR_SERVICE) as SensorManager
         proximity = sensorManager?.getDefaultSensor(Sensor.TYPE_PROXIMITY)
+        tick = buildTick()
+        buildUi()
+    }
 
-        val root = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            layoutDirection = View.LAYOUT_DIRECTION_RTL
-            setBackgroundColor(0xFFBDBDBD.toInt())
-        }
+    // ---------------------------------------------------------------
+    // رابط
+    // ---------------------------------------------------------------
+    private fun iconBtn(res: Int, color: Int, onClick: (View) -> Unit): ImageView {
+        val v = ImageView(this)
+        v.setImageResource(res)
+        v.setColorFilter(color)
+        v.setPadding(d(12), d(12), d(12), d(12))
+        v.setOnClickListener { onClick(it) }
+        return v
+    }
+
+    private fun buildUi() {
+        buttons.clear()
+        ready = false
+        val root = LinearLayout(this)
+        root.orientation = LinearLayout.VERTICAL
+        root.layoutDirection = View.LAYOUT_DIRECTION_RTL
+        root.setBackgroundColor(bgColor)
+
+        // نوار بالا: بازگشت، عنوان، راهنما، منو
+        val bar = LinearLayout(this)
+        bar.orientation = LinearLayout.HORIZONTAL
+        bar.gravity = Gravity.CENTER_VERTICAL
+        bar.setPadding(d(6), d(8), d(6), d(2))
+        bar.addView(iconBtn(R.drawable.ic_back, barFg) { finish() }, LinearLayout.LayoutParams(d(48), d(48)))
+        val title = TextView(this)
+        title.text = "رکعت شمار"
+        title.textSize = 19f
+        title.setTextColor(barFg)
+        title.typeface = tfB
+        val tlp = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        tlp.setMargins(0, 0, d(6), 0)
+        bar.addView(title, tlp)
+        bar.addView(iconBtn(R.drawable.ic_help, barFg) { showHelp() }, LinearLayout.LayoutParams(d(48), d(48)))
+        bar.addView(iconBtn(R.drawable.ic_more, barFg) { showMenu(it) }, LinearLayout.LayoutParams(d(48), d(48)))
+        root.addView(bar, LinearLayout.LayoutParams(-1, -2))
+
         counter = CounterView(this)
         root.addView(counter, LinearLayout.LayoutParams(-1, 0, 1f))
+        counter.setOnClickListener { if (touchMode) advance() }
 
-        val row = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            layoutDirection = View.LAYOUT_DIRECTION_RTL
-            setPadding((12 * dp).toInt(), (8 * dp).toInt(), (12 * dp).toInt(), (12 * dp).toInt())
-        }
+        val row = LinearLayout(this)
+        row.orientation = LinearLayout.HORIZONTAL
+        row.layoutDirection = View.LAYOUT_DIRECTION_RTL
+        row.setPadding(d(12), d(8), d(12), d(12))
         prayers.forEachIndexed { i, p ->
-            val t = TextView(this).apply {
-                text = p.first
-                typeface = tf
-                textSize = 20f
-                gravity = Gravity.CENTER
-                setOnClickListener { prayer = i; step = 0; refresh() }
-            }
+            val t = TextView(this)
+            t.text = p.first
+            t.typeface = tf
+            t.textSize = 20f
+            t.gravity = Gravity.CENTER
+            t.setOnClickListener { prayer = i; step = 0; refresh() }
             buttons.add(t)
-            val lp = LinearLayout.LayoutParams(0, (56 * dp).toInt(), 1f)
-            lp.setMargins((4 * dp).toInt(), 0, (4 * dp).toInt(), 0)
+            val lp = LinearLayout.LayoutParams(0, d(56), 1f)
+            lp.setMargins(d(4), 0, d(4), 0)
             row.addView(t, lp)
         }
         root.addView(row, LinearLayout.LayoutParams(-1, -2))
 
-        counter.setOnLongClickListener { step = 0; refresh(); true }
-
         setContentView(root)
+        applyBars()
         refresh()
+        ready = true
     }
 
-    /** صدای تیک با اسیلاتور (موج سینوسی کوتاه با افت سریع) ساخته می‌شود، بدون فایل صوتی */
+    @Suppress("DEPRECATION")
+    private fun applyBars() {
+        window.addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS)
+        window.statusBarColor = bgColor
+        window.navigationBarColor = bgColor
+        var f = window.decorView.systemUiVisibility
+        if (Build.VERSION.SDK_INT >= 23) {
+            f = if (dark) f and View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR.inv() else f or View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR
+        }
+        if (Build.VERSION.SDK_INT >= 26) {
+            f = if (dark) f and View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR.inv() else f or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
+        }
+        window.decorView.systemUiVisibility = f
+    }
+
+    private fun refresh() {
+        buttons.forEachIndexed { i, t ->
+            val sel = i == prayer
+            val g = GradientDrawable()
+            g.cornerRadius = 8 * dp
+            if (sel) {
+                g.setColor(0xFF333333.toInt())
+            } else {
+                g.setColor(Color.TRANSPARENT)
+                g.setStroke((3 * dp).toInt(), if (dark) 0xFF8E8E8E.toInt() else 0xFF333333.toInt())
+            }
+            t.background = g
+            t.setTextColor(if (sel) Color.WHITE else if (dark) 0xFFD0D0D0.toInt() else 0xFF333333.toInt())
+        }
+        counter.show(scene(), ready)
+        getSharedPreferences("state", MODE_PRIVATE).edit()
+            .putInt("prayer", prayer).putInt("step", step).apply()
+    }
+
+    private fun advance() {
+        step = if (step >= total()) 0 else step + 1
+        refresh()
+        playTick()
+    }
+
+    // ---------------------------------------------------------------
+    // منو، راهنما، تنظیمات
+    // ---------------------------------------------------------------
+    private fun showMenu(anchor: View) {
+        val bg = if (dark) 0xFF3A3A3A.toInt() else 0xFFFFFFFF.toInt()
+        val fg = if (dark) 0xFFFFFFFF.toInt() else 0xFF222222.toInt()
+        val card = LinearLayout(this)
+        card.orientation = LinearLayout.VERTICAL
+        card.layoutDirection = View.LAYOUT_DIRECTION_RTL
+        val shape = GradientDrawable()
+        shape.setColor(bg)
+        shape.cornerRadius = 10 * dp
+        card.background = shape
+        card.elevation = 12 * dp
+        val popup = PopupWindow(card, d(190), LinearLayout.LayoutParams.WRAP_CONTENT, true)
+        popup.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+        popup.elevation = 12 * dp
+
+        fun item(icon: Int, label: String, onClick: () -> Unit) {
+            val r = LinearLayout(this)
+            r.orientation = LinearLayout.HORIZONTAL
+            r.gravity = Gravity.CENTER_VERTICAL
+            r.setPadding(d(18), d(15), d(18), d(15))
+            val iv = ImageView(this)
+            iv.setImageResource(icon)
+            iv.setColorFilter(fg)
+            r.addView(iv, LinearLayout.LayoutParams(d(22), d(22)))
+            val tv = TextView(this)
+            tv.text = label
+            tv.textSize = 15.5f
+            tv.setTextColor(fg)
+            tv.typeface = tf
+            val lp = LinearLayout.LayoutParams(-2, -2)
+            lp.setMargins(0, 0, d(12), 0)
+            r.addView(tv, lp)
+            r.setOnClickListener { popup.dismiss(); onClick() }
+            card.addView(r, LinearLayout.LayoutParams(-1, -2))
+        }
+        item(R.drawable.ic_reset, "بازنشانی") { step = 0; refresh() }
+        item(if (dark) R.drawable.ic_sun else R.drawable.ic_moon, if (dark) "روز" else "شب") { toggleTheme() }
+        item(if (touchMode) R.drawable.ic_sensor else R.drawable.ic_touch, if (touchMode) "سنسور" else "لمسی") { toggleMode() }
+        popup.showAsDropDown(anchor, 0, 0, Gravity.LEFT)
+    }
+
+    private fun toggleTheme() {
+        dark = !dark
+        getSharedPreferences("state", MODE_PRIVATE).edit().putBoolean("dark", dark).apply()
+        buildUi()
+    }
+
+    private fun toggleMode() {
+        touchMode = !touchMode
+        getSharedPreferences("state", MODE_PRIVATE).edit().putBoolean("touch", touchMode).apply()
+        if (touchMode) {
+            sensorManager?.unregisterListener(this)
+            Toast.makeText(this, "حالت لمسی: برای شمارش، صفحه را لمس کنید", Toast.LENGTH_SHORT).show()
+        } else {
+            isNear = false
+            proximity?.let { sensorManager?.registerListener(this, it, SensorManager.SENSOR_DELAY_NORMAL) }
+            Toast.makeText(this, "حالت سنسور: با نزدیک کردن پیشانی به سنسور می‌شمارد", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun showHelp() {
+        val dlg = Dialog(this)
+        dlg.requestWindowFeature(Window.FEATURE_NO_TITLE)
+        val c = LinearLayout(this)
+        c.orientation = LinearLayout.VERTICAL
+        c.layoutDirection = View.LAYOUT_DIRECTION_RTL
+        val g = GradientDrawable()
+        g.setColor(if (dark) 0xFF2A2A2A.toInt() else 0xFFFFFFFF.toInt())
+        g.cornerRadius = 18 * dp
+        c.background = g
+        c.setPadding(d(22), d(22), d(22), d(16))
+        val fg = if (dark) 0xFFFFFFFF.toInt() else 0xFF222222.toInt()
+        val head = TextView(this)
+        head.text = "راهنما"
+        head.textSize = 20f
+        head.typeface = tfB
+        head.setTextColor(fg)
+        c.addView(head)
+        val body = TextView(this)
+        body.text = "• تعداد فلش‌های بالا شماره‌ی رکعت و تعداد فلش‌های پایین شماره‌ی سجده را نشان می‌دهد.\n\n" +
+            "• حالت سنسور: گوشی را جلوی خود بگذارید؛ هر بار پیشانی به سنسور نزدیک شود یک سجده شمرده می‌شود.\n\n" +
+            "• حالت لمسی: با هر لمس صفحه یک سجده شمرده می‌شود.\n\n" +
+            "• از منوی ⋮ می‌توانید شمارش را بازنشانی کنید، تم روز و شب را عوض کنید یا حالت شمارش را تغییر دهید."
+        body.textSize = 15f
+        body.typeface = tf
+        body.setTextColor(if (dark) 0xFFCFCFCF.toInt() else 0xFF444444.toInt())
+        body.setLineSpacing(0f, 1.15f)
+        val blp = LinearLayout.LayoutParams(-1, -2)
+        blp.setMargins(0, d(12), 0, d(16))
+        c.addView(body, blp)
+        val ok = TextView(this)
+        ok.text = "متوجه شدم"
+        ok.gravity = Gravity.CENTER
+        ok.textSize = 16f
+        ok.typeface = tfB
+        ok.setTextColor(Color.WHITE)
+        val og = GradientDrawable()
+        og.setColor(0xFF333333.toInt())
+        og.cornerRadius = 12 * dp
+        ok.background = og
+        ok.setOnClickListener { dlg.dismiss() }
+        c.addView(ok, LinearLayout.LayoutParams(-1, d(48)))
+        dlg.setContentView(c)
+        dlg.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+        dlg.window?.setLayout((resources.displayMetrics.widthPixels * 0.9f).toInt(), -2)
+        dlg.show()
+    }
+
+    // ---------------------------------------------------------------
+    // سنسور و صدا
+    // ---------------------------------------------------------------
+    override fun onResume() {
+        super.onResume()
+        isNear = false
+        if (!touchMode) proximity?.let { sensorManager?.registerListener(this, it, SensorManager.SENSOR_DELAY_NORMAL) }
+    }
+
+    override fun onPause() {
+        super.onPause()
+        sensorManager?.unregisterListener(this)
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        tick?.release()
+        tick = null
+    }
+
+    override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
+
+    override fun onSensorChanged(e: SensorEvent) {
+        if (touchMode) return
+        val near = e.values[0] < (proximity?.maximumRange ?: 5f).coerceAtMost(5f)
+        val now = System.currentTimeMillis()
+        if (near && !isNear && now - lastCount > 700) {
+            lastCount = now
+            advance()
+        }
+        isNear = near
+    }
+
+    /** صدای تیک با اسیلاتور (موج سینوسی کوتاه با افت سریع) */
     private fun buildTick(): AudioTrack? = try {
         val sr = 44100
         val n = sr * 60 / 1000
@@ -149,53 +390,9 @@ class MainActivity : Activity(), SensorEventListener {
         }
     }
 
-    override fun onResume() {
-        super.onResume()
-        isNear = false
-        proximity?.let { sensorManager?.registerListener(this, it, SensorManager.SENSOR_DELAY_NORMAL) }
-    }
-
-    override fun onPause() {
-        super.onPause()
-        sensorManager?.unregisterListener(this)
-    }
-
-    override fun onDestroy() {
-        super.onDestroy()
-        tick?.release()
-        tick = null
-    }
-
-    override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
-
-    override fun onSensorChanged(e: SensorEvent) {
-        val near = e.values[0] < (proximity?.maximumRange ?: 5f).coerceAtMost(5f)
-        val now = System.currentTimeMillis()
-        if (near && !isNear && now - lastCount > 700) {
-            lastCount = now
-            step = if (step >= total()) 0 else step + 1
-            refresh()
-            playTick()
-        }
-        isNear = near
-    }
-
-    private fun refresh() {
-        buttons.forEachIndexed { i, t ->
-            val sel = i == prayer
-            t.background = GradientDrawable().apply {
-                cornerRadius = 8 * dp
-                setStroke((3 * dp).toInt(), 0xFF333333.toInt())
-                setColor(if (sel) 0xFF333333.toInt() else Color.TRANSPARENT)
-            }
-            t.setTextColor(if (sel) Color.WHITE else 0xFF333333.toInt())
-        }
-        counter.show(scene(), ready)
-        ready = true
-        getSharedPreferences("state", MODE_PRIVATE).edit()
-            .putInt("prayer", prayer).putInt("step", step).apply()
-    }
-
+    // ---------------------------------------------------------------
+    // صفحه‌ی شمارش
+    // ---------------------------------------------------------------
     inner class CounterView(ctx: Context) : View(ctx) {
         private val p = Paint(Paint.ANTI_ALIAS_FLAG)
         private val text = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -229,7 +426,7 @@ class MainActivity : Activity(), SensorEventListener {
         private fun drawT(c: Canvas, s: String, x: Float, y: Float, alpha: Float) {
             val a = (255 * alpha.coerceIn(0f, 1f)).toInt()
             if (a == 0) return
-            text.color = Color.argb(a, 0, 0, 0)
+            text.color = (ink and 0x00FFFFFF) or (a shl 24)
             c.drawText(s, x, y, text)
         }
 
@@ -245,10 +442,11 @@ class MainActivity : Activity(), SensorEventListener {
             val h = height.toFloat()
             val cx = w / 2
 
-            // پس‌زمینه با هاله‌ی سفید
-            c.drawColor(0xFFBDBDBD.toInt())
+            // پس‌زمینه با هاله
+            c.drawColor(bgColor)
             p.style = Paint.Style.FILL
-            p.shader = RadialGradient(cx, h * 0.3f, w * 0.9f, 0xFFFFFFFF.toInt(), 0x00FFFFFF, Shader.TileMode.CLAMP)
+            val glow = if (dark) 0xFF2B2B2B.toInt() else 0xFFFFFFFF.toInt()
+            p.shader = RadialGradient(cx, h * 0.3f, w * 0.9f, glow, bgColor and 0x00FFFFFF, Shader.TileMode.CLAMP)
             c.drawRect(0f, 0f, w, h, p)
             p.shader = null
 
@@ -267,7 +465,7 @@ class MainActivity : Activity(), SensorEventListener {
                 lineTo(r, sy)
                 lineTo(r, h)
             }
-            p.color = 0xFFBEBEBE.toInt()
+            p.color = if (dark) 0xFF000000.toInt() else 0xFFBEBEBE.toInt()
             c.drawPath(arch, p)
             p.style = Paint.Style.STROKE
             p.strokeWidth = 3 * dp
@@ -275,22 +473,18 @@ class MainActivity : Activity(), SensorEventListener {
             c.drawPath(arch, p)
             p.style = Paint.Style.FILL
 
-            // عنوان
-            text.textAlign = Paint.Align.RIGHT
-            text.textSize = 22 * dp
-            drawT(c, "رکعت شمار", w - 24 * dp, 38 * dp, 0.85f)
-            text.textAlign = Paint.Align.CENTER
-
             // تکبیر
             val wTakbir = wt(from.takbir, to.takbir)
             if (wTakbir > 0f) {
+                text.typeface = Typeface.create(Typeface.SERIF, Typeface.BOLD)
                 text.textSize = w * 0.15f
                 drawT(c, "اللّٰه أکبر", cx, h * 0.55f, wTakbir)
             }
 
-            // برچسب رکعت و سجده (جابه‌جایی نرم)
+            // برچسب‌ها
+            text.typeface = tf
             text.textSize = w * 0.075f
-            drawSwap(c, cx, h * 0.30f, from.rak, to.rak, !from.takbir, !to.takbir)
+            drawSwap(c, cx, h * 0.37f, from.rak, to.rak, !from.takbir, !to.takbir)
             drawSwap(c, cx, h * 0.77f, from.saj, to.saj, !from.takbir, !to.takbir)
 
             // فلش‌ها: تعداد فلش بالا = رکعت ، تعداد فلش پایین = سجده
@@ -308,14 +502,16 @@ class MainActivity : Activity(), SensorEventListener {
         }
 
         private fun drawArrows(c: Canvas, cx: Float, cy: Float, count: Float, up: Boolean, size: Float) {
-            val spacing = if (up) size * 0.5f else size * 1.6f
+            val spacing = if (up) size * 0.62f else size * 1.6f
             val eff = max(count, 1f)
             for (i in 0 until ceil(count).toInt()) {
                 val k = (count - i).coerceIn(0f, 1f)
-                val x = cx + (i - (eff - 1f) / 2f) * spacing
-                p.color = Color.argb((255 * k).toInt(), 0, 0, 0)
+                val off = i - (eff - 1f) / 2f
+                val x = cx + off * spacing
+                p.color = (ink and 0x00FFFFFF) or ((255 * k).toInt() shl 24)
                 c.save()
                 c.translate(x, cy)
+                if (up) c.rotate(off * 12f) // فلش‌های بالا مثل بادبزن باز می‌شوند
                 c.scale(k, k)
                 if (up) arrowUp(c, size) else arrowDown(c, size)
                 c.restore()
