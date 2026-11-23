@@ -139,16 +139,14 @@ class MainActivity : Activity(), SensorEventListener {
         bar.orientation = LinearLayout.HORIZONTAL
         bar.gravity = Gravity.CENTER_VERTICAL
         bar.setPadding(d(6), d(8), d(6), d(2))
-        bar.addView(iconBtn(R.drawable.ic_back, barFg) { finish() }, LinearLayout.LayoutParams(d(48), d(48)))
         val title = TextView(this)
         title.text = "رکعت شمار"
         title.textSize = 19f
         title.setTextColor(barFg)
         title.typeface = tfB
         val tlp = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-        tlp.setMargins(0, 0, d(6), 0)
+        tlp.setMargins(0, 0, d(14), 0)
         bar.addView(title, tlp)
-        bar.addView(iconBtn(R.drawable.ic_help, barFg) { showHelp() }, LinearLayout.LayoutParams(d(48), d(48)))
         bar.addView(iconBtn(R.drawable.ic_more, barFg) { showMenu(it) }, LinearLayout.LayoutParams(d(48), d(48)))
         root.addView(bar, LinearLayout.LayoutParams(-1, -2))
 
@@ -281,54 +279,6 @@ class MainActivity : Activity(), SensorEventListener {
             proximity?.let { sensorManager?.registerListener(this, it, SensorManager.SENSOR_DELAY_NORMAL) }
             Toast.makeText(this, "حالت سنسور: با نزدیک کردن پیشانی به سنسور می‌شمارد", Toast.LENGTH_SHORT).show()
         }
-    }
-
-    private fun showHelp() {
-        val dlg = Dialog(this)
-        dlg.requestWindowFeature(Window.FEATURE_NO_TITLE)
-        val c = LinearLayout(this)
-        c.orientation = LinearLayout.VERTICAL
-        c.layoutDirection = View.LAYOUT_DIRECTION_RTL
-        val g = GradientDrawable()
-        g.setColor(if (dark) 0xFF2A2A2A.toInt() else 0xFFFFFFFF.toInt())
-        g.cornerRadius = 18 * dp
-        c.background = g
-        c.setPadding(d(22), d(22), d(22), d(16))
-        val fg = if (dark) 0xFFFFFFFF.toInt() else 0xFF222222.toInt()
-        val head = TextView(this)
-        head.text = "راهنما"
-        head.textSize = 20f
-        head.typeface = tfB
-        head.setTextColor(fg)
-        c.addView(head)
-        val body = TextView(this)
-        body.text = "• تعداد فلش‌های بالا شماره‌ی رکعت و تعداد فلش‌های پایین شماره‌ی سجده را نشان می‌دهد.\n\n" +
-            "• حالت سنسور: گوشی را جلوی خود بگذارید؛ هر بار پیشانی به سنسور نزدیک شود یک سجده شمرده می‌شود.\n\n" +
-            "• حالت لمسی: با هر لمس صفحه یک سجده شمرده می‌شود.\n\n" +
-            "• از منوی ⋮ می‌توانید شمارش را بازنشانی کنید، تم روز و شب را عوض کنید یا حالت شمارش را تغییر دهید."
-        body.textSize = 15f
-        body.typeface = tf
-        body.setTextColor(if (dark) 0xFFCFCFCF.toInt() else 0xFF444444.toInt())
-        body.setLineSpacing(0f, 1.15f)
-        val blp = LinearLayout.LayoutParams(-1, -2)
-        blp.setMargins(0, d(12), 0, d(16))
-        c.addView(body, blp)
-        val ok = TextView(this)
-        ok.text = "متوجه شدم"
-        ok.gravity = Gravity.CENTER
-        ok.textSize = 16f
-        ok.typeface = tfB
-        ok.setTextColor(Color.WHITE)
-        val og = GradientDrawable()
-        og.setColor(0xFF333333.toInt())
-        og.cornerRadius = 12 * dp
-        ok.background = og
-        ok.setOnClickListener { dlg.dismiss() }
-        c.addView(ok, LinearLayout.LayoutParams(-1, d(48)))
-        dlg.setContentView(c)
-        dlg.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
-        dlg.window?.setLayout((resources.displayMetrics.widthPixels * 0.9f).toInt(), -2)
-        dlg.show()
     }
 
     // ---------------------------------------------------------------
@@ -476,7 +426,7 @@ class MainActivity : Activity(), SensorEventListener {
             // تکبیر
             val wTakbir = wt(from.takbir, to.takbir)
             if (wTakbir > 0f) {
-                text.typeface = Typeface.create(Typeface.SERIF, Typeface.BOLD)
+                text.typeface = tfB
                 text.textSize = w * 0.15f
                 drawT(c, "اللّٰه أکبر", cx, h * 0.55f, wTakbir)
             }
@@ -484,8 +434,8 @@ class MainActivity : Activity(), SensorEventListener {
             // برچسب‌ها
             text.typeface = tf
             text.textSize = w * 0.075f
-            drawSwap(c, cx, h * 0.37f, from.rak, to.rak, !from.takbir, !to.takbir)
-            drawSwap(c, cx, h * 0.77f, from.saj, to.saj, !from.takbir, !to.takbir)
+            drawSwap(c, cx, h * 0.335f, from.rak, to.rak, !from.takbir, !to.takbir)
+            drawSwap(c, cx, h * 0.81f, from.saj, to.saj, !from.takbir, !to.takbir)
 
             // فلش‌ها: تعداد فلش بالا = رکعت ، تعداد فلش پایین = سجده
             val up = from.up + (to.up - from.up) * t
@@ -497,12 +447,12 @@ class MainActivity : Activity(), SensorEventListener {
             val wDone = wt(from.done, to.done)
             if (wDone > 0f) {
                 text.textSize = w * 0.055f
-                drawT(c, "نماز تمام شد", cx, h * 0.88f, wDone)
+                drawT(c, "نماز تمام شد", cx, h * 0.91f, wDone)
             }
         }
 
         private fun drawArrows(c: Canvas, cx: Float, cy: Float, count: Float, up: Boolean, size: Float) {
-            val spacing = if (up) size * 0.62f else size * 1.6f
+            val spacing = if (up) size * 0.5f else size * 1.6f
             val eff = max(count, 1f)
             for (i in 0 until ceil(count).toInt()) {
                 val k = (count - i).coerceIn(0f, 1f)
@@ -511,7 +461,6 @@ class MainActivity : Activity(), SensorEventListener {
                 p.color = (ink and 0x00FFFFFF) or ((255 * k).toInt() shl 24)
                 c.save()
                 c.translate(x, cy)
-                if (up) c.rotate(off * 12f) // فلش‌های بالا مثل بادبزن باز می‌شوند
                 c.scale(k, k)
                 if (up) arrowUp(c, size) else arrowDown(c, size)
                 c.restore()
