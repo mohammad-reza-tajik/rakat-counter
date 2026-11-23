@@ -434,7 +434,7 @@ class MainActivity : Activity(), SensorEventListener {
             // برچسب‌ها
             text.typeface = tf
             text.textSize = w * 0.075f
-            drawSwap(c, cx, h * 0.335f, from.rak, to.rak, !from.takbir, !to.takbir)
+            drawSwap(c, cx, h * 0.29f, from.rak, to.rak, !from.takbir, !to.takbir)
             drawSwap(c, cx, h * 0.81f, from.saj, to.saj, !from.takbir, !to.takbir)
 
             // فلش‌ها: تعداد فلش بالا = رکعت ، تعداد فلش پایین = سجده
