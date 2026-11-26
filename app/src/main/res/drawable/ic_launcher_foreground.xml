@@ -7,8 +7,8 @@
     <group
         android:pivotX="54"
         android:pivotY="54"
-        android:scaleX="0.75"
-        android:scaleY="0.75">
+        android:scaleX="0.6"
+        android:scaleY="0.6">
 
         <!-- Outer architectural arch -->
         <path
@@ -26,25 +26,13 @@
             android:strokeWidth="1.2"
             android:pathData="M34,79 L34,54 C34,43 45,33 54,28 C63,33 74,43 74,54 L74,79" />
 
-        <!-- Crescent -->
-        <path
-            android:fillColor="#F5D990"
-            android:pathData="M59,38 C48,38 42,47 44,57 C46,67 57,72 66,65 C59,67 51,62 50,54 C49,47 53,41 59,38 Z" />
-
-        <!-- Star -->
-        <path
-            android:fillColor="#F5D990"
-            android:pathData="M69,38 L71,43 L76,45 L71,47 L69,52 L67,47 L62,45 L67,43 Z" />
 
         <!-- Decorative base -->
         <path
             android:fillColor="#CDA85B"
             android:pathData="M29,81 L79,81 L75,85 L33,85 Z" />
-
-        <!-- Center ornament -->
         <path
             android:fillColor="#CDA85B"
-            android:pathData="M54,87 L58,91 L54,95 L50,91 Z" />
-
+            android:pathData="M54,41 A4,4 0,1 1,54,49 A4,4 0,1 1,54,41 Z" />
     </group>
 </vector>
